@@ -1,17 +1,8 @@
 PMLCourse
 =========
-Question: Predict the outcome of ?
-Using the variables
-Data: quite a few redudant variables std and variance 
-Many variables username & timestamp not useful for prediction
-
-Selection of columns
-redudancy of data and PCA to remove
-
-Try with RF 
-Using caret commands
-CV method & test set validation
-very rare to find fine tuned in first cut
-
-application on test set provided
-100% accuracy 20 out of 20 correctly classified
+Solution to the assignment for the course PML
+'WeightLiftExcersieReport.html' has the details.
+Points to note:
+RandomForest was able to accurately predict without much of variance.
+PCA could have been used to pre-process but not used in the final model yet.
+Caret package is indeed a useful utility for all prediction tasks!
