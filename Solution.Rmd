@@ -1,0 +1,181 @@
+Human Activity Recognition - Qualitative Assesment of Weight Lifting
+========================================================
+```{r echo=FALSE}
+library(caret,quietly=TRUE)
+library(lattice,quietly=TRUE)
+library(randomForest,quietly=TRUE)
+library(doMC,quietly=TRUE)
+library(pROC,quietly=TRUE)
+
+```
+
+The data set comes from studying the activity of the weight lifting excersie (http://groupware.les.inf.puc-rio.br/har, Weight Lifting Exercises Dataset); The study consists of chartectrizing the correct way & common mistakes while doing 'Dumbbell Biceps' excerise.The usefulness of this study is to utilize the learnings for better sports training.
+The task is to predict the correct way and the common mistakes given the data collected from the sensors. 
+Specification of class variable,
+
+| Class    |Excerise Interpreation|
+|----------|:-------------:|
+| A |exactly according to the specification|
+| B |throwing the elbows to the front|
+| c |lifting the dumbbell only halfway|
+| D |lowering the dumbbell only halfway|
+| E |throwing the hips to the front|
+Only Class A corresponds to the 'perfect way' of doing excersise while the rest indicates the common mistakes.
+
+```{r cachedChunk,cache=TRUE,echo=FALSE}
+
+setwd("/home/sumanthn/PML")
+dataAll<-read.csv("pml-training.csv",header=TRUE)
+set.seed(1234)
+```
+
+Studying the data set
+-------------------------
+The data set has 19622 instances & 160 features. The class variable is indicated as '**classe**'.
+Looking at the features set and its relevance to the prediction task,the following features are not relevant for the prediction of the class;*X,user_name,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp,new_window,num_window* since the classification task is to prediction of quality over all execrise and not the individual; the time dimension is quite irrelevant.
+
+```{r cache=TRUE,echo=FALSE}
+dataAll<-dataAll[,-c(1:7)]
+
+```
+The class are quite evenly distributed except for the class A(correct) which is 
+
+```{r cache=TRUE,echo=FALSE}
+table(dataAll$classe)
+```
+
+```{r fig.width=4, fig.height=4,echo=FALSE}
+barchart(dataAll$classe)
+```
+
+A summary of the predictors indicates that there are predictors which are indicating the same measure, the variance;
+the colnames starting with var and stddev are refering to the same measure, the var* is removed and only std.dev is retained
+```{r,echo=FALSE}
+ #allnames(dataAll)[grep("std|var",names(dataAll))]
+redudVarSet<-names(dataAll)[grep("^var",names(dataAll))]
+colIdx<-grep("^var",names(dataAll))
+dataAll<-dataAll[,-colIdx]
+#print(redudVarSet)
+
+```
+There are quite a few variables which have more than 97% of data not available; they too are removed
+```{r,echo=FALSE}
+countNAs<-apply(dataAll,2,function(x){100*length(which(complete.cases(x)==FALSE))/length(x)})
+naIdx<-which(sapply(countNAs,function(x) { if (x > 90) TRUE else FALSE} ) == TRUE)
+#x2<-x[,-naIdx]
+dataClean<-dataAll[,-naIdx]
+print("Dimensions of cleaned data")
+print(dim(dataClean))
+```
+*Note: some of these variables seems to be correlated strongly with one of the classes; this is evident with the single variable models*
+Quite a few variables don't contribute much to the prediction since it is mostly with zero variance; which can removed from analysis
+```{r,cache=TRUE,echo=FALSE}
+nzv<-nearZeroVar(dataClean)
+dataClean<-dataClean[,-nzv]
+cat("after removing 0 variance variables usable features,", dim(dataClean)[2], "\n"," ")
+
+```
+
+
+Data redudancy is also seen with multiple measurements along the X,Y & Z axes(*x.gyros_forearm_x,x.gyros_forearm_y,x.gyros_forearm_z*) which are can be collapsed into single component using PCA;
+```{r,cache=TRUE,echo=FALSE}
+pcaClean<-prcomp(dataClean[,-ncol(dataClean)],scale=TRUE,center=TRUE)
+summary(pcaClean)
+```
+with 25 components from PCA it is possible to explain 95.45% of variance and with 31 components a variance of **98%** can be explained.
+A reduced data set from 164 features to 31 components can be used for prediction task.
+
+
+Model building
+-------------------------
+
+Create Data Partition using utiliy from 'caret' package; with 20% of dataset for test validation
+Using  RandomForest to train the model; CV is used for estimating the best params
+10 fold CV with repition of count 5 is used for parameter estimation
+
+```{r,cache=TRUE,echo=FALSE}
+x<-dataClean
+trainIdx<-createDataPartition(x$classe,p=0.70,list=FALSE)
+
+trainSet<-x[trainIdx,]
+testSet<-x[-trainIdx,]
+```
+```{r,cache=TRUE,echo=FALSE}
+#only 3 cores for computation, giving away all freezes system
+
+registerDoMC(cores = 3)
+#10-fold CV with 5 times reptition
+ctrl <- trainControl(method = "repeatedcv",number = 10, repeats = 5)
+grid_rf <- expand.grid(.mtry = c(2, 4, 8, 12))
+#grid_rf <- expand.grid(.mtry = c(10))
+model_randomForest <- train(classe~ ., data = trainSet, method = "rf",
+                       metric = "Kappa", trControl = ctrl,ntree=200,
+                              tuneGrid = grid_rf) 
+
+
+summary(model_randomForest)
+print("Best model")
+print(model_randomForest$bestTune)
+print("Model fit")
+print(model_randomForest)
+
+```
+Model evalutation on test set
+```{r,cache=TRUE,echo=FALSE}
+
+predictionTest<-predict(model_randomForest,newdata=testSet[,-ncol(testSet)])
+predictionTestProbs<-predict(model_randomForest,newdata=testSet[,-ncol(testSet)],type="prob")
+
+confusionMatrix(predictionTest,testSet[,ncol(testSet)])
+
+```
+Kappa greater than 0.9 means a good fit in the test set; this model can be used for prediction
+ 
+
+
+### Variable selection
+
+Variable importance
+
+```{r,cache=TRUE,echo=FALSE}
+varImpData<-varImp(model_randomForest)
+head(varImp(model_randomForest),10)
+```
+```{r,fig.width=4, fig.height=6,echo=FALSE}
+plot(varImpData,top=15)
+```
+
+###Roc curves
+```{r,cache=TRUE,echo=FALSE}
+
+
+modelRocA<-roc(testSet$classe,predictionTestProbs$A)
+modelRocB<-roc(testSet$classe,predictionTestProbs$B)
+modelRocC<-roc(testSet$classe,predictionTestProbs$C)
+modelRocD<-roc(testSet$classe,predictionTestProbs$D)
+
+modelRocE<-roc(testSet$classe,predictionTestProbs$D)
+
+
+```
+ROC Curves
+```{r,fig.show='hold',echo=FALSE,fig.width=8}
+
+plot(modelRocA,print.thres="best",main="Roc")
+
+```
+
+
+Measuring with the testset it turns out to be that model built using random forest predicts well.
+
+###Test on assignment data set
+```{r,cache=TRUE,echo=FALSE}
+
+xtest<-read.csv("pml-testing.csv",header=TRUE)
+featureUsed<-colnames(dataClean)
+featureUsed<-featureUsed[-length(featureUsed)]
+predictionHoldOutTest<-predict(model_randomForest,newdata=xtest[,featureUsed])
+print(predictionHoldOutTest)
+```
+
+
